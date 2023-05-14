@@ -1,0 +1,111 @@
+""" 
+
+"""
+import os
+import sys
+import konlpy
+import pandas as pd
+import numpy as np
+os.environ['JAVA_OPTS'] = 'Xmx4096M'  # Heap size 4GB
+
+import requests
+import json
+import xml.etree.ElementTree as et 
+import bs4
+from lxml import html
+from urllib.parse import urlencode, quote_plus, unquote
+
+
+## 시간 표시  ##################################### 
+import time
+import datetime
+now = datetime.datetime.now()
+
+timeserise = time.time()
+timeserise = str(int(timeserise))
+#print(timeserise)
+
+def now_time():
+    y = datetime.datetime.now()
+    return y
+
+print(now)
+#################################################  
+
+#작업하는 경로(위치)가 어디인지 확인
+#print(os.getcwd())
+
+prePath_in = "C:/selenium/input/"
+prePath_out = "C:/selenium/output/"
+
+
+# API 호출 함수
+def api_call_01(sigunguCd, bjdongCd, bjTitle):
+
+    # 'sigunguCd': '11680' 시군구코드 설정
+    # 'bjdongCd': '10300' 법정동코드 설정
+    for i in range(1,51):
+        try:
+            url = 'http://apis.data.go.kr/1613000/BldRgstService_v2/getBrExposPubuseAreaInfo'
+            params = {'serviceKey': '2HFw3v2BbOybmzEDd4ucCX0lJbJpTx5TjodV8hN4qzubQjUrvKB9lb6y9UA3Gzgw+/CLJbGtzZtS/+ujEIDujg==',
+                'numOfRows': '10000', 'pageNo': i, 'sigunguCd': sigunguCd, 'bjdongCd': bjdongCd}
+            response = requests.get(url, params=params)
+            contents = response.text
+
+            xml_obj = bs4.BeautifulSoup(contents, 'lxml-xml')
+            rows = xml_obj.findAll('item')
+
+            row_list   = []
+            name_list  = []
+            value_list = []
+
+            for j in range(0, len(rows)):
+                columns = rows[j].find_all()
+                for k in range(0, len(columns)):
+                    if j == 0:
+                        name_list.append(columns[k].name)
+                    value_list.append(columns[k].text)
+                row_list.append(value_list)
+                print(".........."+ str(j))
+                value_list = []
+
+        except EOFError:
+            break
+
+
+        df = pd.DataFrame(row_list, columns=name_list)
+        # "C:/selenium/test.csv" 형식으로 "저장할경로/파일명.csv" 설정
+        # 파일명 한글로 하면 깨질 수 있으니 영문 권장
+        df.to_csv( prePath_out+ ""+ bjTitle +".csv", encoding='cp949', header=False, index=False, mode='a')
+
+
+# 법정동 엑셀 읽어들이기
+data_pd = pd.read_excel( prePath_in + "bjdongcd_seoul.xls", sheet_name = 0, names = ['col1', 'col2', 'col3']  )
+
+#print(type(data_pd))
+#print(type(data_np))
+#print(data_np)
+
+print(data_pd.columns) # 전체 칼럼 출력
+print(data_pd.info()) # 각 칼럼별 데이터 수 & 데이터 타입 확인
+print(data_pd.head())  # 상위 5개 출력
+print(data_pd.shape)   # 행, 열 개수 확인
+print(data_pd.tail())  # 하위 5개 출력
+print()
+
+"""
+print("  print(data_pd.values) ")
+print(data_pd.values)
+for value in data_pd.values:
+    print(value)
+"""
+
+#print("  print(data_pd.to_numpy()) ")
+#print(data_pd.to_numpy()) # DataFrame을 numpy 배열 형식으로 변환할 수 있다.
+     
+data_np = pd.DataFrame.to_numpy(data_pd)     #  pandas 객체를 numpy 배열 객체인 ndarray로 반환
+for value in data_np:
+    print(value[0], value[1], value[2])    
+    print("start : "+ str(now_time()) )
+    api_call_01(value[0], value[1], value[2]) 
+    print("end : "+ str(now_time()) )
