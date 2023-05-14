@@ -1,0 +1,318 @@
+---------- 1. 공동주택 공급/전용 면적 전처리 ----------
+
+----- 1) 원본데이터 다운로드 -----
+
+----- 2) 원본데이터 업로드 -----
+-- 필요 컬럼 선정
+-- 테이블 생성(ONEBITE)
+CREATE TABLE onebite
+(area NUMBER(19,9),
+bjdongCd_area VARCHAR2(5),
+bldNm_area VARCHAR2(122),
+etcPurps VARCHAR2(500),
+exposPubuseGbCd CHAR(1),
+exposPubuseGbCdNm VARCHAR2(100),
+flrGbCdNm VARCHAR2(100),
+mainAtchGbCd CHAR(1),
+mainAtchGbCdNm VARCHAR2(100),
+mainPurpsCd VARCHAR2(6),
+mainPurpsCdNm VARCHAR2(100),
+mgmBldrgstPk VARCHAR2(33),
+newPlatPlc VARCHAR2(200),
+platPlc_area VARCHAR2(200),
+sigunguCd VARCHAR2(5),
+etcpurps_cleaning VARCHAR(500),
+etcpurps_cleaningcd CHAR(1),
+exclusive_area number(19,9),
+supply_area number(19,9))
+;
+-- IMPORT (수작업)
+-- INDEX 생성
+CREATE INDEX onebite_id ON onebite(area, bjdongCd_area, bldNm_area, etcPurps, exposPubuseGbCd, exposPubuseGbCdNm, flrGbCdNm, mainAtchGbCd, mainAtchGbCdNm, mainPurpsCd, mainPurpsCdNm, mgmBldrgstPk, newPlatPlc, platPlc_area, sigunguCd, etcpurps_cleaning, etcpurps_cleaningcd, exclusive_area, supply_area);
+
+----- 3) etcpurps 컬럼 치환 -----
+-- etcpurps 컬럼 중복 제거 조회
+SELECT DISTINCT etcpurps FROM onebite;
+-- 조회한 etcpurps 항목 엑셀로 EXPORT -> 클리닝 및 '0', '1' 코딩 (수작업)
+-- 치환테이블 CLEANING 생성
+CREATE TABLE cleaning
+(etcpurps1 VARCHAR2(500) UNIQUE,
+etcpurps_cleaning VARCHAR2(500),
+etcpurps_cleaningcd CHAR(1));
+-- 엑셀 데이터 IMPORT (수작업)
+-- INDEX 생성
+CREATE INDEX cleaning_id ON cleaning(etcpurps1, etcpurps_cleaning, etcpurps_cleaningcd);
+-- ONEBITE 테이블 치환 UPDATE
+UPDATE onebite
+SET etcpurps_cleaning = (SELECT etcpurps_cleaning FROM cleaning WHERE cleaning.etcpurps1 = onebite.etcpurps),
+    etcpurps_cleaningcd = (SELECT etcpurps_cleaningcd FROM cleaning WHERE cleaning.etcpurps1 = onebite.etcpurps);
+----- 4) 전용면적 컬럼 -----
+-- 전용면적 테이블 생성
+CREATE TABLE 전용면적 
+AS SELECT mgmBldrgstPk, sum(area) as exclusive_area
+    FROM onebite 
+    WHERE exposPubuseGbCd = '1'
+    GROUP BY mgmBldrgstPk;
+-- INDEX 생성
+CREATE INDEX 전용면적_id ON 전용면적(mgmBldrgstPk, exclusive_area);
+-- ONEBITE 테이블에 UPDATE
+UPDATE onebite
+SET exclusive_area = (SELECT exclusive_area FROM 전용면적 WHERE 전용면적.mgmBldrgstPk = onebite.mgmBldrgstPk);
+
+----- 5) 공급면적 컬럼 -----
+-- 아파트 테이블 생성(mgmBldrgstPk) (오피스텔 제외 데이터)
+CREATE TABLE 아파트
+AS SELECT mgmBldrgstPk
+    FROM onebite
+    WHERE mainPurpsCdNm != '오피스텔';
+-- 아파트 테이블에 supply_area 컬럼 추가
+ALTER TABLE 아파트 ADD supply_area NUMBER(19,9);
+-- INDEX 생성
+CREATE INDEX 아파트_id ON 아파트(mgmBldrgstPk, supply_area);
+-- 아파트1 테이블 생성
+CREATE TABLE 아파트1
+AS SELECT mgmBldrgstPk, SUM(area) as supply_area
+    FROM onebite
+    WHERE etcPurps_cleaningCd = '1' OR exposPubuseGbCd = '1'
+    GROUP BY mgmBldrgstPk;
+-- INDEX 생성
+CREATE INDEX 아파트1_id ON 아파트1(mgmBldrgstPk, supply_area);
+-- 아파트 테이블에 supply_area 컬럼 생성
+ALTER TABLE 아파트 ADD supply_area number(19,9) null;
+-- 아파트에 아파트1 supply_area 컬럼 UPDATE
+UPDATE 아파트
+SET supply_area = (SELECT supply_area FROM 아파트1 WHERE 아파트.mgmBldrgstPk = 아파트1.mgmBldrgstPk);
+-- 아파트 중복행 삭제
+DELETE FROM 아파트
+    WHERE ROWID IN (
+                    SELECT ROWID
+                    FROM (
+                            SELECT *
+                            FROM (
+                                    SELECT ROW_NUMBER() OVER(PARTITION BY mgmBldrgstPk ORDER BY mgmBldrgstPk) AS num
+                                    FROM 아파트
+                                )
+                            WHERE num > 1
+                            )
+                    );
+-- INDEX 생성
+CREATE INDEX 아파트_id ON 아파트(mgmBldrgstPk, supply_area);
+-- 오피스텔 테이블 생성(mgmBldrgstPk)
+CREATE TABLE 오피스텔
+AS SELECT mgmBldrgstPk
+    FROM onebite
+    WHERE mainPurpsCdNm = '오피스텔';
+-- 오피스텔 테이블에 supply_area 컬럼 추가
+ALTER TABLE 오피스텔 ADD supply_area NUMBER(19,9);    
+-- INDEX 생성
+CREATE INDEX 오피스텔_id ON 오피스텔(mgmBldrgstPk, supply_area);
+-- 오피스텔1 테이블 생성
+CREATE TABLE 오피스텔1
+AS SELECT mgmBldrgstPk, SUM(area) as supply_area
+    FROM onebite
+    GROUP BY mgmBldrgstPk;
+-- INDEX 생성
+CREATE INDEX 오피스텔1_id ON 오피스텔1(mgmBldrgstPk, supply_area);
+-- 오피스텔에 오피스텔1 supply_area UPDATE
+UPDATE 오피스텔
+SET supply_area = (SELECT supply_area FROM 오피스텔1 WHERE 오피스텔.mgmBldrgstPk = 오피스텔1.mgmBldrgstPk);
+-- 오피스텔 중복행 삭제
+DELETE FROM 오피스텔
+    WHERE ROWID IN (
+                    SELECT ROWID
+                    FROM (
+                            SELECT *
+                            FROM (
+                                    SELECT ROW_NUMBER() OVER(PARTITION BY mgmBldrgstPk ORDER BY mgmBldrgstPk) AS num
+                                    FROM 오피스텔
+                                )
+                            WHERE num > 1
+                            )
+                    );
+-- ONEBITE 테이블에 오피스텔 supply_area UPDATE
+UPDATE onebite
+SET supply_area = (SELECT supply_area FROM 오피스텔 WHERE onebite.mgmBldrgstPk = 오피스텔.mgmBldrgstPk);
+-- ONEBITE 테이블에 아파트 supply_area UPDATE (onebite.supply_area가 null인 행에만 UPDATE)
+UPDATE onebite
+SET supply_area = (SELECT supply_area FROM 아파트 WHERE onebite.mgmBldrgstPk = 아파트.mgmBldrgstPk)
+WHERE supply_area is null;
+
+----- 6) 매칭에 필요한 테이블 레이아웃 -----
+-- ONEBITE 테이블 복사본 ONEBITE_UNIQUE 테이블 생성
+CREATE TABLE onebite_unique
+AS SELECT * FROM onebite;
+-- INDEX 생성
+CREATE INDEX onebite_unique_id ON onebite_unique(area, bjdongCd_area, bldNm_area, etcPurps, exposPubuseGbCd, exposPubuseGbCdNm, flrGbCdNm, mainAtchGbCd, mainAtchGbCdNm, mainPurpsCd, mainPurpsCdNm, mgmBldrgstPk, newPlatPlc, platPlc_area, sigunguCd, etcpurps_cleaning, etcpurps_cleaningcd, exclusive_area, supply_area);
+-- 공용 면적 (exposPubuseGbCd = '2') 해당 행 삭제
+DELETE
+FROM onebite_unique
+WHERE expospubusegbcd = '2';
+-- 필요 컬럼만 남기고 제거
+ALTER TABLE onebite_unique DROP (area, etcpurps, expospubusegbcd, expospubusegbcdnm, mainpurpscd, etcpurps_cleaning, etcpurps_cleaningcd);
+-- mainpurpscdnm 공동주택, 다세대주택, 다가구주택, 다중주택, 단독주택, 아파트, 연립주택, 오피스텔 이외 값 삭제
+DELETE
+FROM onebite_unique
+WHERE mainpurpscdnm NOT IN ('공동주택', '다세대주택', '다가구주택', '다중주택', '단독주택', '아파트', '연립주택', '오피스텔');
+-- mainatchgbcd  = '0' 이외 값 삭제
+DELETE
+FROM onebite_unique
+WHERE mainatchgbcd !='0';
+---- platPlc_area, exclusive_area 중복 행 삭제 (ONEBTIE_AREA 테이블 생성)
+CREATE TABLE onebite_area
+AS SELECT *
+FROM(SELECT ROW_NUMBER() OVER(PARTITION BY onebite_unique.platPlc_area, onebite_unique.exclusive_area ORDER BY onebite_unique.bjdongCd_area DESC ) AS RNUM, onebite_unique.*
+    FROM onebite_unique)
+WHERE RNUM =1;
+-- INDEX 생성
+CREATE INDEX onebite_area_id ON onebite_area(bjdongCd_area, bldNm_area, flrGbCdNm, mainAtchGbCd, mainAtchGbCdNm, mainpurpscdnm, mgmBldrgstPk, newPlatPlc, platPlc_area, sigunguCd, exclusive_area, supply_area);
+
+----- 7) 매칭 KEY값(PLATPLC, ADDJI) 컬럼 -----
+-- platplc 컬럼 조회
+SELECT DISTINCT platplc_area FROM onebite_area;
+-- 조회한 platplc 항목 엑셀로 EXPORT
+-- platplc 수정 -> platplc_edit 컬럼 생성 (수작업)
+-- 카카오 API 이용 addji_area 컬럼 생성 (R 코딩)
+-- platplc_edit 테이블 생성 (치환테이블)
+CREATE TABLE platplc_edit
+(platplc VARCHAR2(200) UNIQUE,
+platplc_edit VARCHAR2(200),
+addji_area VARCHAR2(200));
+-- 엑셀 데이터 IMPORT (수작업) 
+-- INDEX 생성
+CREATE INDEX platplc_edit_id ON platplc_edit(platplc, platplc_edit, addji_area);
+-- 치환테이블(PLATPLC_EDIT) 이용 ONEBITE_AREA_EDIT 테이블 생성
+CREATE TABLE onebite_area_edit
+AS SELECT *
+FROM onebite_area
+LEFT OUTER JOIN platplc_edit
+ON onebite_area.platplc_area = platplc_edit.platplc;
+-- platplc_area 컬럼 삭제
+ALTER TABLE onebite_area_edit DROP COLUMN platplc_area;
+-- platplc -> platplc_area 컬럼 이름 변경
+ALTER TABLE onebite_area_edit RENAME COLUMN platplc to platplc_area;
+-- INDEX 생성
+CREATE INDEX onebite_area_edit_id ON onebite_area_edit(BJDONGCD_area, BLDNM_area, FLRGBCDNM, MAINATCHGBCD, MAINATCHGBCDNM, MAINPURPSCDNM, mgmBldrgstPk, NEWPLATPLC, SIGUNGUCD, EXCLUSIVE_AREA, SUPPLY_AREA, PLATPLC_area, PLATPLC_EDIT, ADDJI_AREA);
+
+---------- 2. 공동주택 단지정보 전처리 ----------
+
+----- 1) 원본데이터 다운로드 -----
+
+----- 2) 원본데이터 업로드 -----
+-- 필요 컬럼 선정
+-- 테이블 생성(ONEBITE_APT_INFO)
+CREATE TABLE onebite_apt_info
+(platPlc_apt_info VARCHAR2(200), 
+bjdongCd_apt_info VARCHAR2(5), 
+bldNm_apt_info VARCHAR2(122), 
+bcRat NUMBER(19,9), 
+vlRat NUMBER(19,9), 
+hhldCnt NUMBER(19,9),
+mainBldCnt NUMBER(19,9), 
+totPkngCnt NUMBER(19,9), 
+addji_apt_info VARCHAR2(200), 
+addlon_apt_info NUMBER(19,9), 
+addlat_apt_info NUMBER(19,9), 
+addbcode_apt_info NUMBER(19,9));
+-- IMPORT (수작업)
+-- INDEX 생성
+CREATE INDEX onebite_apt_info_id ON onebite_apt_info(platPlc_apt_info, bjdongCd_apt_info, bldNm_apt_info, bcRat, vlRat, hhldCnt, mainBldCnt, totPkngCnt, addji_apt_info, addlon_apt_info, addlat_apt_info, addbcode_apt_info);
+
+
+---------- 3. 부동산 실거래가 매매/전세 전처리 ----------
+
+----- 1) 원본데이터 다운로드 -----
+
+----- 2) 데이터 업로드 -----
+-- 테이블 생성(ONEBITE_부동산)
+CREATE TABLE onebite_부동산
+(apt VARCHAR2(200),
+addji_부동산 VARCHAR2(200),
+platplc_부동산 VARCHAR2(200),
+exclusive_area_부동산 NUMBER(19,9),
+id VARCHAR2(5),
+도로명주소 VARCHAR2(200),
+도로명시군구코드 VARCHAR2(5),
+도로명 VARCHAR2(200),
+도로명건물본번호코드 VARCHAR2(5),
+도로명건물부번호코드 VARCHAR2(5),
+jibun VARCHAR2(200),
+sido VARCHAR2(200),
+sigungu VARCHAR2(200),
+emdong VARCHAR2(200),
+addlon_부동산 NUMBER(19,9),
+addlat_부동산 NUMBER(19,9),
+addbcode_부동산 VARCHAR2(20),
+지번주소 VARCHAR2(200),
+bjdong VARCHAR2(200),
+지역코드 VARCHAR2(5),
+code VARCHAR2(5),
+add_fac VARCHAR2(200),
+공원_500m NUMBER(19,9),
+공원_1km NUMBER(19,9),
+공원_2km NUMBER(19,9),
+점포_500m NUMBER(19,9),
+점포_1km NUMBER(19,9),
+점포_2km NUMBER(19,9),
+병원_500m NUMBER(19,9),
+병원_1km NUMBER(19,9),
+병원_2km NUMBER(19,9),
+의원_500m NUMBER(19,9),
+의원_1km NUMBER(19,9),
+의원_2km NUMBER(19,9),
+기차_500m NUMBER(19,9),
+기차_1km NUMBER(19,9),
+기차_2km NUMBER(19,9),
+지하철_500m NUMBER(19,9),
+지하철_1km NUMBER(19,9),
+지하철_2km NUMBER(19,9),
+초등학교_500m NUMBER(19,9),
+초등학교_1km NUMBER(19,9),
+초등학교_2km NUMBER(19,9),
+중고등학교_500m NUMBER(19,9),
+중고등학교_1km NUMBER(19,9),
+중고등학교_2km NUMBER(19,9));
+-- IMPORT (수작업)
+-- INDEX 생성
+CREATE INDEX onebite_부동산_id ON onebite_부동산(apt, addji_부동산, platplc_부동산, exclusive_area_부동산, id, 도로명주소, 도로명시군구코드, 도로명, 도로명건물본번호코드, 도로명건물부번호코드, jibun, sido, sigungu, emdong, addlon_부동산, addlat_부동산, addbcode_부동산, 지번주소, bjdong, 지역코드, code, add_fac);
+
+
+---------- 4. 공동주택 공급/전용면적 & 공동주택 단지정보 매칭 ----------
+
+----- 1) JOIN -----
+-- ONEBITE_AREA_EDIT과 ONEBITE_APT_INFO FULL OUTER JOIN (KEY값 : platplc) -> ONEBITE2 테이블 생성
+CREATE TABLE onebite2
+AS SELECT *
+FROM onebite_area_edit
+FULL OUTER JOIN onebite_apt_info
+ON onebite_area_edit.platPlc_edit = onebite_apt_info.platPlc_apt_info;
+
+----- 2) 컬럼 정리 -----
+-- platplc_area 컬럼 제거
+ALTER TABLE onebite2 DROP COLUMN platplc_area;
+-- platplc_edit 컬럼 -> platplc_area 로 이름 변경
+ALTER TABLE onebite2 RENAME COLUMN platplc_edit to platplc_area;
+-- INDEX 생성
+CREATE INDEX onebite2_id ON onebite2(BJDONGCD_area, BLDNM_area, FLRGBCDNM, MAINATCHGBCD, MAINATCHGBCDNM, MAINPURPSCDNM, mgmBldrgstPk, NEWPLATPLC, SIGUNGUCD, EXCLUSIVE_AREA, SUPPLY_AREA, PLATPLC_area, BCRAT, VLRAT, HHLDCNT, MAINBLDCNT, TOTPKNGCNT, ADDJI_area, ADDLON_apt_info, ADDLAT_apt_info, ADDBCODE_apt_info, ADDJI_apt_info, PLATPLC_apt_info, BJDONGCD_apt_info, BLDNM_apt_info);
+
+
+---------- 5. 공동주택 공급면적/전용면적/단지정보 & 부동산 실거래가 매매/전세 매칭 ----------
+
+----- 1) JOIN -----
+-- ONEBITE2와 ONEBITE_부동산 FULL OUTER JOIN (key값 : addji, exclusive_area) -> ONEBITE3 테이블 생성
+CREATE TABLE onebite3
+AS SELECT *
+FROM onebite2
+FULL OUTER JOIN onebite_부동산
+ON onebite2.addji_area = onebite_부동산.addji_부동산 AND onebite2.exclusive_area = onebite_부동산.exclusive_area_부동산;
+
+----- 2) 빈값 처리 -----
+-- '' 값 -> NULL값 수정
+-- bldnm_area 컬럼
+UPDATE onebite3
+SET bldnm_area = NULL WHERE bldnm_area = ' ';
+-- flrgbcdnm 컬럼
+UPDATE onebite3
+SET flrgbcdnm = NULL WHERE flrgbcdnm = ' ';
+-- newplatplc 컬럼
+UPDATE onebite3
+SET newplatplc = NULL WHERE newplatplc = ' ';
